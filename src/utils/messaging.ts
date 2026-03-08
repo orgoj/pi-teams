@@ -27,7 +27,7 @@ export async function appendMessage(teamName: string, agentName: string, message
 export async function readInbox(
   teamName: string,
   agentName: string,
-  unreadOnly = false,
+  unreadOnly = true,  // CHANGED: default to unread only
   markAsRead = true
 ): Promise<InboxMessage[]> {
   const p = inboxPath(teamName, agentName);
@@ -35,12 +35,17 @@ export async function readInbox(
 
   return await withLock(p, async () => {
     const allMsgs: InboxMessage[] = JSON.parse(fs.readFileSync(p, "utf-8"));
+    
     let result = allMsgs;
-
     if (unreadOnly) {
       result = allMsgs.filter(m => !m.read);
     }
 
+    // Return COPY of messages BEFORE marking as read
+    // This way caller sees read: false for new messages
+    const toReturn = result.map(m => ({ ...m }));
+
+    // Mark as read AFTER copying
     if (markAsRead && result.length > 0) {
       for (const m of allMsgs) {
         if (result.includes(m)) {
@@ -50,7 +55,7 @@ export async function readInbox(
       fs.writeFileSync(p, JSON.stringify(allMsgs, null, 2));
     }
 
-    return result;
+    return toReturn;
   });
 }
 
