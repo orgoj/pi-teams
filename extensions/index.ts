@@ -480,15 +480,26 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "read_inbox",
     label: "Read Inbox",
-    description: "Read messages from an agent's inbox.",
+    description: "Read messages from an agent's inbox. Use wait_for_new=true to block until a message arrives (efficient, no polling). ESC cancels the wait.",
     parameters: Type.Object({
       team_name: Type.String(),
       agent_name: Type.Optional(Type.String({ description: "Whose inbox to read. Defaults to your own." })),
       unread_only: Type.Optional(Type.Boolean({ default: true })),
+      wait_for_new: Type.Optional(Type.Boolean({ default: false, description: "Wait for new messages if none exist. Uses fs.watch for efficiency." })),
+      timeout_seconds: Type.Optional(Type.Number({ default: 120, description: "Timeout for wait_for_new in seconds (default 120 = 2 minutes). Use 0 for no timeout." })),
     }),
     async execute(toolCallId, params: any, signal, onUpdate, ctx) {
       const targetAgent = params.agent_name || agentName;
-      const msgs = await messaging.readInbox(params.team_name, targetAgent, params.unread_only);
+      const timeoutMs = (params.timeout_seconds ?? 120) * 1000;
+      const msgs = await messaging.readInbox(
+        params.team_name,
+        targetAgent,
+        params.unread_only ?? true,
+        true, // markAsRead
+        params.wait_for_new ?? false,
+        timeoutMs,
+        signal
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(msgs, null, 2) }],
         details: { messages: msgs },

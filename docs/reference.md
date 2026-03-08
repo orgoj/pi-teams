@@ -334,8 +334,12 @@ Read incoming messages for an agent.
 - `team_name` (required): Name of the team
 - `agent_name` (optional): Whose inbox to read. Defaults to current agent.
 - `unread_only` (optional): Only show unread messages. Default: `true`
+- `wait_for_new` (optional): Wait for new messages if none exist. Uses fs.watch for efficiency (no polling). Default: `false`
+- `timeout_seconds` (optional): Timeout for `wait_for_new` in seconds. Default: `120` (2 minutes). Use `0` for no timeout.
 
-**Returns**: Array of messages with sender, content, timestamp, and read status.
+**Returns**: Array of messages with sender, content, timestamp, and read status. Empty array if timeout or cancelled.
+
+**ESC Cancel**: When `wait_for_new=true`, pressing ESC cancels the wait and returns to prompt.
 
 **Examples**:
 ```javascript
@@ -347,6 +351,15 @@ read_inbox({ team_name: "my-team", unread_only: false })
 
 // Read a teammate's inbox (as lead)
 read_inbox({ team_name: "my-team", agent_name: "security-bot" })
+
+// Wait for new messages (efficient, no polling)
+read_inbox({ team_name: "my-team", wait_for_new: true })
+
+// Wait with custom timeout (5 minutes)
+read_inbox({ team_name: "my-team", wait_for_new: true, timeout_seconds: 300 })
+
+// Wait indefinitely
+read_inbox({ team_name: "my-team", wait_for_new: true, timeout_seconds: 0 })
 ```
 
 ---

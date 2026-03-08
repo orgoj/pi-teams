@@ -85,3 +85,42 @@ Use automated hooks to ensure standards.
 - **Isolation**: Give teammates tasks that don't overlap too much to avoid git conflicts.
 - **Clear Prompts**: Be specific about the teammate's role and boundaries when spawning.
 - **Check-ins**: Use `task_list` regularly to see the "big picture" of your team's progress.
+
+---
+
+## 🔧 Development
+
+**NO BUILD** - This is a TypeScript package loaded directly by pi. No compilation step.
+
+### Testing
+```bash
+# Tests require dev dependencies installed first
+npm install
+
+# Run tests
+npm test
+```
+
+### Available Tools (registered by this package)
+- `team_create` - Create a new team
+- `spawn_teammate` - Spawn a teammate in a pane/window
+- `spawn_lead_window` - Open lead in separate window
+- `send_message` - Direct message to teammate
+- `broadcast_message` - Message all teammates
+- `read_inbox` - Read inbox (with optional wait_for_new)
+- `task_create` - Create a task
+- `task_submit_plan` - Submit plan for approval
+- `task_evaluate_plan` - Approve/reject a plan
+- `task_list` - List all tasks
+- `task_update` - Update task status/owner
+- `task_read` - Read task details
+- `check_teammate` - Check teammate alive status
+- `process_shutdown_approved` - Shutdown a teammate
+- `team_shutdown` - Shutdown entire team
+
+### Key Files
+- `extensions/index.ts` - Tool definitions and event handlers
+- `src/utils/messaging.ts` - Inbox/message handling
+- `src/utils/tasks.ts` - Task management
+- `src/utils/teams.ts` - Team config management
+- `src/adapters/*.ts` - Terminal adapters (tmux, zellij, wezterm, iterm2)

@@ -24,18 +24,20 @@ export async function appendMessage(teamName: string, agentName: string, message
   });
 }
 
-export async function readInbox(
-  teamName: string,
-  agentName: string,
-  unreadOnly = true,  // CHANGED: default to unread only
-  markAsRead = true
+/**
+ * Internal function to read inbox from file path.
+ * Does not handle waiting - just reads the file.
+ */
+async function readInboxFromFile(
+  filePath: string,
+  unreadOnly: boolean,
+  markAsRead: boolean
 ): Promise<InboxMessage[]> {
-  const p = inboxPath(teamName, agentName);
-  if (!fs.existsSync(p)) return [];
+  if (!fs.existsSync(filePath)) return [];
 
-  return await withLock(p, async () => {
-    const allMsgs: InboxMessage[] = JSON.parse(fs.readFileSync(p, "utf-8"));
-    
+  return await withLock(filePath, async () => {
+    const allMsgs: InboxMessage[] = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+
     let result = allMsgs;
     if (unreadOnly) {
       result = allMsgs.filter(m => !m.read);
@@ -52,11 +54,138 @@ export async function readInbox(
           m.read = true;
         }
       }
-      fs.writeFileSync(p, JSON.stringify(allMsgs, null, 2));
+      fs.writeFileSync(filePath, JSON.stringify(allMsgs, null, 2));
     }
 
     return toReturn;
   });
+}
+
+/**
+ * Wait for a new message to arrive in the inbox.
+ * Uses fs.watch for efficient waiting without polling.
+ * @param teamName The team name
+ * @param agentName The agent name whose inbox to watch
+ * @param timeoutMs Timeout in milliseconds (default 120000 = 2 minutes)
+ * @param signal AbortSignal for cancellation (ESC key)
+ * @returns true if a new message arrived, false if timeout/aborted
+ */
+export async function waitForMessage(
+  teamName: string,
+  agentName: string,
+  timeoutMs = 120000,
+  signal?: AbortSignal
+): Promise<boolean> {
+  const p = inboxPath(teamName, agentName);
+  const dir = path.dirname(p);
+
+  // Ensure directory exists for fs.watch
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    let watcher: fs.FSWatcher | null = null;
+    let timeoutId: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (resolved) return;
+      resolved = true;
+      if (watcher) watcher.close();
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+
+    // Set up timeout
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+
+    // Handle abort signal (ESC key)
+    if (signal) {
+      if (signal.aborted) {
+        cleanup();
+        resolve(false);
+        return;
+      }
+      signal.addEventListener('abort', () => {
+        cleanup();
+        resolve(false);
+      }, { once: true });
+    }
+
+    // Check for unread messages
+    const checkForNewMessage = async () => {
+      try {
+        const msgs = await readInboxFromFile(p, true, false);
+        if (msgs.length > 0) {
+          cleanup();
+          resolve(true);
+        }
+      } catch {
+        // File might be locked or corrupted, ignore
+      }
+    };
+
+    // Check immediately first
+    checkForNewMessage();
+
+    // If file doesn't exist yet, watch the directory
+    if (!fs.existsSync(p)) {
+      watcher = fs.watch(dir, (eventType, filename) => {
+        if (filename === path.basename(p)) {
+          checkForNewMessage();
+        }
+      });
+    } else {
+      watcher = fs.watch(p, () => {
+        checkForNewMessage();
+      });
+    }
+
+    watcher.on('error', () => {
+      cleanup();
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Read messages from an agent's inbox.
+ * @param teamName The team name
+ * @param agentName The agent name whose inbox to read
+ * @param unreadOnly Only return unread messages (default true)
+ * @param markAsRead Mark returned messages as read (default true)
+ * @param waitForNew Wait for new messages if none exist (default false)
+ * @param timeoutMs Timeout for waiting in milliseconds (default 120000 = 2 minutes)
+ * @param signal AbortSignal for cancellation (ESC key)
+ */
+export async function readInbox(
+  teamName: string,
+  agentName: string,
+  unreadOnly = true,
+  markAsRead = true,
+  waitForNew = false,
+  timeoutMs = 120000,
+  signal?: AbortSignal
+): Promise<InboxMessage[]> {
+  const p = inboxPath(teamName, agentName);
+
+  // If waitForNew is true and no messages exist, wait for them
+  if (waitForNew) {
+    const existingMsgs = await readInboxFromFile(p, true, false);
+    if (existingMsgs.length === 0) {
+      // Wait for new message
+      const arrived = await waitForMessage(teamName, agentName, timeoutMs, signal);
+      if (!arrived) {
+        // Timeout or aborted - return empty array
+        return [];
+      }
+    }
+  }
+
+  return await readInboxFromFile(p, unreadOnly, markAsRead);
 }
 
 export async function sendPlainMessage(

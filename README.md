@@ -49,6 +49,7 @@ pi install npm:pi-teams
 - **Persistent Window Titles**: Windows are automatically titled `[team-name]: [agent-name]` for easy identification in your window manager.
 - **Plan Approval Mode**: Require teammates to submit their implementation plans for your approval before they touch any code.
 - **Broadcast Messaging**: Send a message to the entire team at once for global coordination and announcements.
+- **Efficient Message Waiting**: Use `read_inbox(wait_for_new=true)` to wait for messages efficiently using fs.watch (no polling). Press ESC to cancel.
 - **Quality Gate Hooks**: Automated shell scripts run when tasks are completed (e.g., to run tests or linting).
 - **Thinking Level Control**: Set per-teammate thinking levels (`off`, `minimal`, `low`, `medium`, `high`) to balance speed vs. reasoning depth.
 

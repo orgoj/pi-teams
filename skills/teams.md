@@ -16,6 +16,8 @@ Coordinate multiple agents working on a project using shared task lists and mess
     *   `task_get`: Get full details of a specific task by ID.
     *   `task_update`: Update a task's status (`pending`, `in_progress`, `completed`, `deleted`) or owner.
 4.  **Communicate**: Use `send_message` to give instructions or receive updates. Teammates should use `read_inbox` to check for messages.
+    - Use `read_inbox(wait_for_new=true)` to efficiently wait for messages (uses fs.watch, no polling).
+    - ESC key cancels the wait and returns to prompt.
 5.  **Monitor**: Use `check_teammate` to see if they are still running and if they have sent messages back.
 6.  **Cleanup**:
     *   `force_kill_teammate`: Forcibly stop a teammate and remove them from the team.
@@ -36,6 +38,7 @@ When you are spawned as a teammate:
 
 - **Update Task Status**: As you work, use `task_update` to set your tasks to `in_progress` and then `completed`.
 - **Frequent Communication**: Send short summaries of your work back to `team-lead` frequently.
+- **Wait Efficiently**: Use `read_inbox(wait_for_new=true)` to wait for messages instead of busy-polling.
 - **Context Matters**: When you finish a task, send a message explaining your results and any new files you created.
 - **Independence**: If you get stuck, try to solve it yourself first, but don't hesitate to ask `team-lead` for clarification.
 - **Orderly Shutdown**: When you've finished all your work and have no more instructions, notify the lead and wait for shutdown approval.
