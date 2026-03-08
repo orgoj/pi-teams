@@ -334,7 +334,9 @@ export default function (pi: ExtensionAPI) {
       await messaging.sendPlainMessage(safeTeamName, "team-lead", safeName, params.prompt, "Initial prompt");
 
       const piBinary = process.argv[1] || "pi";
-      let piCmd = piBinary;
+      // Fallback to "pi" if the path doesn't exist or isn't executable
+      const piBinaryResolved = (piBinary && fs.existsSync(piBinary) && fs.statSync(piBinary).mode & 0o111) ? piBinary : "pi";
+      let piCmd = piBinaryResolved;
 
       if (chosenModel) {
         // Use the combined --model provider/model:thinking format
@@ -346,6 +348,9 @@ export default function (pi: ExtensionAPI) {
       } else if (params.thinking) {
         piCmd = `${piBinary} --thinking ${params.thinking}`;
       }
+
+      // DEBUG: keep pane alive to see errors - REMOVE AFTER FIXING
+      piCmd = `${piCmd} || (echo "PI FAILED WITH EXIT CODE: $?" && sleep 300)`;
 
       const env: Record<string, string> = {
         ...process.env,
@@ -413,11 +418,15 @@ export default function (pi: ExtensionAPI) {
       const teamConfig = await teams.readConfig(safeTeamName);
       const cwd = params.cwd || process.cwd();
       const piBinary = process.argv[1] || "pi";
-      let piCmd = piBinary;
+      // Fallback to "pi" if the path doesn't exist or isn't executable
+      const piBinaryResolved = (piBinary && fs.existsSync(piBinary) && fs.statSync(piBinary).mode & 0o111) ? piBinary : "pi";
+      let piCmd = piBinaryResolved;
       if (teamConfig.defaultModel) {
         // Use the combined --model provider/model format
         piCmd = `${piBinary} --model ${teamConfig.defaultModel}`;
       }
+      // DEBUG: keep pane alive to see errors
+      piCmd = `${piCmd} || (echo "PI FAILED WITH EXIT CODE: $?" && sleep 300)`;
 
       const env = { ...process.env, PI_TEAM_NAME: safeTeamName, PI_AGENT_NAME: "team-lead" };
       try {
