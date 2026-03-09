@@ -63,7 +63,15 @@ async function readInboxFromFile(
 
 /**
  * Wait for a new message to arrive in the inbox.
- * Uses fs.watch for efficient waiting without polling.
+ * Uses fs.watch for efficient waiting with fallback polling for reliability.
+ *
+ * FIXES applied:
+ * 1. Await initial check before setting up watcher (race condition fix)
+ * 2. Re-check after watcher is set up (close race window)
+ * 3. Retry on lock contention instead of silent ignore
+ * 4. Always watch directory (handles file creation/deletion)
+ * 5. Final check on timeout (don't miss messages that arrived during wait)
+ *
  * @param teamName The team name
  * @param agentName The agent name whose inbox to watch
  * @param timeoutMs Timeout in milliseconds (default 120000 = 2 minutes)
@@ -84,75 +92,145 @@ export async function waitForMessage(
     fs.mkdirSync(dir, { recursive: true });
   }
 
+  // Helper to check for messages with retries on lock contention
+  const checkForMessages = async (retries = 3): Promise<boolean> => {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const msgs = await readInboxFromFile(p, true, false);
+        if (msgs.length > 0) {
+          return true;
+        }
+        return false;
+      } catch (e) {
+        // File might be locked, wait and retry
+        if (attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 50 * (attempt + 1)));
+        }
+      }
+    }
+    return false;
+  };
+
   return new Promise((resolve) => {
     let resolved = false;
     let watcher: fs.FSWatcher | null = null;
     let timeoutId: NodeJS.Timeout | null = null;
+    let pollIntervalId: NodeJS.Timeout | null = null;
+    let lastCheckTime = Date.now();
 
     const cleanup = () => {
       if (resolved) return;
       resolved = true;
       if (watcher) watcher.close();
       if (timeoutId) clearTimeout(timeoutId);
+      if (pollIntervalId) clearInterval(pollIntervalId);
+    };
+
+    // Final check before resolving with false (timeout)
+    const finalCheckAndResolve = async (reason: string) => {
+      cleanup();
+      // Always do a final check - message might have arrived during wait
+      const hasMessages = await checkForMessages(5);
+      if (hasMessages) {
+        console.log(`[waitForMessage] Found messages on ${reason} after final check`);
+        resolve(true);
+      } else {
+        console.log(`[waitForMessage] ${reason}, no messages found`);
+        resolve(false);
+      }
     };
 
     // Set up timeout
     timeoutId = setTimeout(() => {
-      cleanup();
-      resolve(false);
+      finalCheckAndResolve('timeout');
     }, timeoutMs);
 
     // Handle abort signal (ESC key)
     if (signal) {
       if (signal.aborted) {
-        cleanup();
-        resolve(false);
+        finalCheckAndResolve('abort');
         return;
       }
       signal.addEventListener('abort', () => {
-        cleanup();
-        resolve(false);
+        finalCheckAndResolve('abort');
       }, { once: true });
     }
 
-    // Check for unread messages
-    const checkForNewMessage = async () => {
-      try {
-        const msgs = await readInboxFromFile(p, true, false);
-        if (msgs.length > 0) {
+    // Debounced check to avoid lock contention from rapid events
+    let checkPending = false;
+    const scheduleCheck = () => {
+      if (checkPending) return;
+      checkPending = true;
+
+      // Small delay to coalesce rapid events
+      setTimeout(async () => {
+        checkPending = false;
+        if (resolved) return;
+
+        const hasMessages = await checkForMessages(3);
+        if (hasMessages) {
           cleanup();
           resolve(true);
         }
-      } catch {
-        // File might be locked or corrupted, ignore
-      }
+        lastCheckTime = Date.now();
+      }, 20);
     };
 
-    // Check immediately first
-    checkForNewMessage();
+    // FALLBACK POLLING: Check every 5 seconds as backup
+    // This catches messages that fs.watch might miss
+    pollIntervalId = setInterval(async () => {
+      if (resolved) return;
+      // Only poll if no recent check (avoid unnecessary work)
+      if (Date.now() - lastCheckTime > 4000) {
+        scheduleCheck();
+      }
+    }, 5000);
 
-    // If file doesn't exist yet, watch the directory
-    if (!fs.existsSync(p)) {
+    // Main async flow
+    (async () => {
+      // FIX 1: Await initial check before setting up watcher
+      const initialCheck = await checkForMessages(3);
+      if (initialCheck) {
+        cleanup();
+        resolve(true);
+        return;
+      }
+
+      // FIX 4: Always watch the directory (not the file)
+      // This handles file creation, deletion, and atomic writes
       watcher = fs.watch(dir, (eventType, filename) => {
         if (filename === path.basename(p)) {
-          checkForNewMessage();
+          scheduleCheck();
         }
       });
-    } else {
-      watcher = fs.watch(p, () => {
-        checkForNewMessage();
-      });
-    }
 
-    watcher.on('error', () => {
-      cleanup();
-      resolve(false);
-    });
+      watcher.on('error', (err) => {
+        console.error('[waitForMessage] Watcher error:', err);
+        // Don't resolve - let fallback polling handle it
+      });
+
+      // FIX 2: Re-check after watcher is set up (close race window)
+      // This catches messages that arrived between initial check and watcher setup
+      await new Promise(r => setTimeout(r, 10)); // Tiny delay for watcher to be ready
+      const postSetupCheck = await checkForMessages(3);
+      if (postSetupCheck) {
+        cleanup();
+        resolve(true);
+        return;
+      }
+    })();
+
+    // FIX 5: Final check is handled in finalCheckAndResolve() on timeout/abort
   });
 }
 
 /**
  * Read messages from an agent's inbox.
+ *
+ * FIX: Removed race condition by always doing final read, even after waitForMessage
+ * returns false. The waitForMessage now does a final check itself, but we also
+ * do one here to be absolutely sure.
+ *
  * @param teamName The team name
  * @param agentName The agent name whose inbox to read
  * @param unreadOnly Only return unread messages (default true)
@@ -177,14 +255,13 @@ export async function readInbox(
     const existingMsgs = await readInboxFromFile(p, true, false);
     if (existingMsgs.length === 0) {
       // Wait for new message
-      const arrived = await waitForMessage(teamName, agentName, timeoutMs, signal);
-      if (!arrived) {
-        // Timeout or aborted - return empty array
-        return [];
-      }
+      await waitForMessage(teamName, agentName, timeoutMs, signal);
+      // FIX: Don't return early on false - always do final read
+      // waitForMessage now does final check internally, but we do one more here
     }
   }
 
+  // ALWAYS do a final read - this catches any messages that arrived
   return await readInboxFromFile(p, unreadOnly, markAsRead);
 }
 
